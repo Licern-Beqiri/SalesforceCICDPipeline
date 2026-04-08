@@ -1,0 +1,61 @@
+name: Validate Salesforce Deployment
+
+on:
+  pull_request:
+    branches:
+      - dev
+      - main
+  workflow_dispatch:
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+
+    environment:
+      name: ${{ github.base_ref == 'main' && 'prod' || 'nonprod' }}
+
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install Salesforce CLI
+        run: npm install --global @salesforce/cli
+
+      - name: Verify Salesforce CLI
+        run: sf version
+
+      - name: Write JWT key to file
+        shell: bash
+        run: |
+          echo "${{ secrets.JWT_SERVER_KEY }}" > server.key
+          chmod 600 server.key
+
+      - name: Authenticate to Salesforce with JWT
+        run: |
+          sf org login jwt \
+            --client-id "${{ secrets.CONSUMER_KEY }}" \
+            --jwt-key-file server.key \
+            --username "${{ secrets.DEPLOYMENT_USER }}" \
+            --instance-url "${{ vars.INSTANCE_URL }}" \
+            --alias ci-org
+
+      - name: Verify authenticated org
+        run: sf org display --target-org ci-org
+
+      - name: Validate deployment
+        run: |
+          sf project deploy validate \
+            --source-dir force-app \
+            --target-org ci-org \
+            --test-level RunLocalTests \
+            --wait 60
