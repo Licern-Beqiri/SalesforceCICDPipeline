@@ -12,7 +12,7 @@ jobs:
     runs-on: ubuntu-latest
 
     environment:
-      name: ${{ github.base_ref == 'main' && 'prod' || 'nonprod' }}
+      name: ${{ github.event_name == 'pull_request' && github.base_ref == 'main' && 'prod' || 'nonprod' }}
 
     permissions:
       contents: read
@@ -26,12 +26,14 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: "20"
 
       - name: Install Salesforce CLI
+        shell: bash
         run: npm install --global @salesforce/cli
 
       - name: Verify Salesforce CLI
+        shell: bash
         run: sf version
 
       - name: Write JWT key to file
@@ -41,6 +43,7 @@ jobs:
           chmod 600 server.key
 
       - name: Authenticate to Salesforce with JWT
+        shell: bash
         run: |
           sf org login jwt \
             --client-id "${{ secrets.CONSUMER_KEY }}" \
@@ -50,9 +53,11 @@ jobs:
             --alias ci-org
 
       - name: Verify authenticated org
+        shell: bash
         run: sf org display --target-org ci-org
 
       - name: Validate deployment
+        shell: bash
         run: |
           sf project deploy validate \
             --source-dir force-app \
