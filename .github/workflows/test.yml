@@ -1,14 +1,15 @@
 name: Continuous Integration Checks
 
+# Intentionally does NOT run on push to dev/main.
+#
+# Rationale: these checks already ran (and passed) on the PR that produced
+# the merge commit. Re-running them post-merge creates noise, wastes minutes,
+# and — most importantly — cannot gate anything because the merge already
+# happened. If you want a post-merge canary, add a separate scheduled workflow.
+#
+# workflow_dispatch is kept so engineers can trigger manually when needed.
+
 on:
-  push:
-    branches:
-      - dev
-      - main
-      - "feature/**"
-      - "bugfix/**"
-      - "hotfix/**"
-      - "release/**"
   pull_request:
     branches:
       - dev
@@ -17,6 +18,7 @@ on:
 
 jobs:
   test:
+    name: JS Checks (Jest + ESLint)
     runs-on: ubuntu-latest
 
     permissions:
@@ -31,35 +33,27 @@ jobs:
         with:
           node-version: "20"
 
+      # Validates that the two files every Salesforce CLI command depends on
+      # are actually present. Catches accidental deletions early, before any
+      # org connection is attempted.
       - name: Validate Salesforce project structure
         shell: bash
         run: |
-          test -f sfdx-project.json || (echo "Missing sfdx-project.json" && exit 1)
-          test -d force-app || (echo "Missing force-app directory" && exit 1)
+          test -f sfdx-project.json \
+            || { echo "::error::sfdx-project.json is missing"; exit 1; }
+          test -d force-app \
+            || { echo "::error::force-app directory is missing"; exit 1; }
 
-      - name: Install project dependencies if package.json exists
+      - name: Install project dependencies
         shell: bash
-        run: |
-          if [ -f package.json ]; then
-            npm ci
-          else
-            echo "No package.json found, skipping dependency install"
-          fi
+        run: npm ci
 
-      - name: Run tests if available
+      - name: Run LWC Jest tests
         shell: bash
-        run: |
-          if [ -f package.json ] && npm run | grep -q " test"; then
-            npm test -- --passWithNoTests
-          else
-            echo "No test script found, skipping tests"
-          fi
+        # The test script already includes --passWithNoTests so projects
+        # without any spec files don't fail. See package.json "test" script.
+        run: npm test
 
-      - name: Run lint if available
+      - name: Run ESLint
         shell: bash
-        run: |
-          if [ -f package.json ] && npm run | grep -q " lint"; then
-            npm run lint
-          else
-            echo "No lint script found, skipping lint"
-          fi
+        run: npm run lint
