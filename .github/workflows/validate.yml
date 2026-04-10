@@ -1,9 +1,5 @@
 name: Validate Salesforce Deployment
 
-# Runs on every PR into dev or main.
-# Environment (and therefore secrets) is determined by the PR target branch —
-# not the source branch. workflow_dispatch defaults to nonprod.
-
 on:
   pull_request:
     branches:
@@ -16,7 +12,5 @@ jobs:
     uses: ./.github/workflows/core.yml
     with:
       mode: validate
-      # github.base_ref is the PR target branch on pull_request events.
-      # It is empty on workflow_dispatch, which safely falls through to nonprod.
       environment: ${{ github.base_ref == 'main' && 'prod' || 'nonprod' }}
     secrets: inherit

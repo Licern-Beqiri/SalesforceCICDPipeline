@@ -33,9 +33,6 @@ jobs:
         with:
           node-version: "20"
 
-      # Validates that the two files every Salesforce CLI command depends on
-      # are actually present. Catches accidental deletions early, before any
-      # org connection is attempted.
       - name: Validate Salesforce project structure
         shell: bash
         run: |
@@ -50,8 +47,6 @@ jobs:
 
       - name: Run LWC Jest tests
         shell: bash
-        # The test script already includes --passWithNoTests so projects
-        # without any spec files don't fail. See package.json "test" script.
         run: npm test
 
       - name: Run ESLint

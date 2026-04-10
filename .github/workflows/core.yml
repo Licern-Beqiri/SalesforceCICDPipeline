@@ -1,8 +1,5 @@
 name: Salesforce Core (Reusable)
 
-# Internal reusable workflow. Called by validate.yml and deploy.yml.
-# Do not trigger directly — prefix _ signals this to teammates.
-
 on:
   workflow_call:
     inputs:
@@ -20,10 +17,8 @@ jobs:
     name: Salesforce ${{ inputs.mode == 'deploy' && 'Deploy' || 'Validate' }} → ${{ inputs.environment }}
     runs-on: ubuntu-latest
 
-    # Give sf --wait 60 room to breathe before GitHub cancels the runner.
     timeout-minutes: 70
 
-    # Resolves secrets + vars from the named GitHub Environment.
     environment: ${{ inputs.environment }}
 
     permissions:
@@ -33,8 +28,6 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          # Full history is required for sfdx-git-delta (planned) and
-          # accurate branch comparisons during validation.
           fetch-depth: 0
 
       - name: Set up Node.js
@@ -50,8 +43,6 @@ jobs:
         shell: bash
         run: sf version
 
-      # Key is written to a chmod-600 file so sf can read it.
-      # The cleanup step below removes it unconditionally on job exit.
       - name: Write JWT key to file
         shell: bash
         run: |
@@ -72,7 +63,6 @@ jobs:
         shell: bash
         run: sf org display --target-org ci-org
 
-      # ── mode: validate ──────────────────────────────────────────────
       - name: Validate deployment (dry-run, no metadata committed)
         if: inputs.mode == 'validate'
         shell: bash
@@ -83,7 +73,6 @@ jobs:
             --test-level  RunLocalTests \
             --wait        60
 
-      # ── mode: deploy ────────────────────────────────────────────────
       - name: Deploy metadata
         if: inputs.mode == 'deploy'
         shell: bash
@@ -94,7 +83,6 @@ jobs:
             --test-level  RunLocalTests \
             --wait        60
 
-      # Runs even when earlier steps fail so the key is never left on disk.
       - name: Remove JWT key file
         if: always()
         shell: bash

@@ -1,9 +1,5 @@
 name: Deploy Salesforce Metadata
 
-# Runs on every push to dev or main (i.e. after a PR is merged).
-# Environment is determined by the target branch, not the source branch.
-# workflow_dispatch on a non-main branch deploys to nonprod.
-
 on:
   push:
     branches:
@@ -16,6 +12,5 @@ jobs:
     uses: ./.github/workflows/core.yml
     with:
       mode: deploy
-      # github.ref_name is the branch that was pushed to.
       environment: ${{ github.ref_name == 'main' && 'prod' || 'nonprod' }}
     secrets: inherit
