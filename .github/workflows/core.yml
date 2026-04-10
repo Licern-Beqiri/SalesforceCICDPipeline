@@ -56,7 +56,7 @@ jobs:
             --client-id    "${{ secrets.CONSUMER_KEY }}" \
             --jwt-key-file server.key \
             --username     "${{ secrets.DEPLOYMENT_USER }}" \
-            --instance-url "${{ vars.INSTANCE_URL }}" \
+            --instance-url "${{ secrets.INSTANCE_URL }}" \
             --alias        ci-org
 
       - name: Verify authenticated org
