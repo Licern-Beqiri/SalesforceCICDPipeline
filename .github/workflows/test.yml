@@ -1,14 +1,5 @@
 name: Continuous Integration Checks
 
-# Intentionally does NOT run on push to dev/main.
-#
-# Rationale: these checks already ran (and passed) on the PR that produced
-# the merge commit. Re-running them post-merge creates noise, wastes minutes,
-# and — most importantly — cannot gate anything because the merge already
-# happened. If you want a post-merge canary, add a separate scheduled workflow.
-#
-# workflow_dispatch is kept so engineers can trigger manually when needed.
-
 on:
   pull_request:
     branches:
