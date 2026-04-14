@@ -8,7 +8,7 @@ on:
         required: true
         type: string
       environment:
-        description: "GitHub Environment to activate: 'nonprod' or 'prod'"
+        description: "GitHub Environment to activate: 'Non-Production' or 'Production'"
         required: true
         type: string
 

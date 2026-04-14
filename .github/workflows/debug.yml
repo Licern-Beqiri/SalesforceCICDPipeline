@@ -13,8 +13,8 @@ on:
         required: true
         type: choice
         options:
-          - nonprod
-          - prod
+          - Non-Production
+          - Production
 
 jobs:
   debug:
