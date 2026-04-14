@@ -50,7 +50,7 @@ jobs:
           echo "-- Salesforce CLI --"
           sf version
           echo "-- sfdx-git-delta --"
-          sgd --version
+          npx sfdx-git-delta --version
       - name: Write JWT key to file
         shell: bash
         run: |
@@ -112,7 +112,7 @@ jobs:
         run: |
           mkdir -p delta
 
-          sgd source delta \
+          npx sfdx-git-delta source delta \
             --to             HEAD \
             --from           "${{ steps.delta.outputs.from_sha }}" \
             --output         ./delta \
