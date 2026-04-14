@@ -44,9 +44,14 @@ jobs:
         shell: bash
         run: |
           npm install --global sfdx-git-delta
-          SGD_PATH=$(find /opt/hostedtoolcache /home/runner /usr -name "sgd" -type f 2>/dev/null | head -1)
-          echo "sgd found at: $SGD_PATH"
-          echo "SGD_BIN=$SGD_PATH" >> $GITHUB_ENV
+          echo "--- npm prefix -g ---"
+          npm prefix -g
+          echo "--- bin dir contents ---"
+          ls -la $(npm prefix -g)/bin/ | grep -i sgd || echo "sgd not in bin"
+          echo "--- global node_modules sgd bin field ---"
+          cat $(npm prefix -g)/lib/node_modules/sfdx-git-delta/package.json | grep -A5 '"bin"'
+          echo "--- find sgd anywhere ---"
+          find / -name "sgd" 2>/dev/null | grep -v proc || echo "sgd not found anywhere"
 
       - name: Verify Salesforce CLI and sfdx-git-delta versions
         shell: bash
