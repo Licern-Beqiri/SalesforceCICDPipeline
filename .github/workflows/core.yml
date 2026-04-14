@@ -55,7 +55,7 @@ jobs:
           sf org login jwt \
             --client-id    "${{ secrets.CONSUMER_KEY }}" \
             --jwt-key-file server.key \
-            --username     "${{ secrets.DEPLOYMENT_USER }}" \
+            --username     "${{ secrets.DEPLOYMENT_USER_NAME }}" \
             --instance-url "${{ vars.INSTANCE_URL }}" \
             --alias        ci-org
 
