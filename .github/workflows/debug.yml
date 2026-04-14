@@ -1,0 +1,150 @@
+name: Debug – Environment & Auth Check
+
+# Manual trigger only. Never runs automatically.
+# Run this when you need to diagnose a misconfigured environment.
+# Secret VALUES are never printed — GitHub would mask them anyway.
+# Only SET vs EMPTY status and length are reported.
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Which GitHub Environment to inspect"
+        required: true
+        type: choice
+        options:
+          - nonprod
+          - prod
+
+jobs:
+  debug:
+    name: Inspect → ${{ github.event.inputs.environment }}
+    runs-on: ubuntu-latest
+
+    # Activates the chosen environment so its secrets + vars are injected.
+    environment: ${{ github.event.inputs.environment }}
+
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # ── 1. Secret presence check ────────────────────────────────────
+      # Values are passed via env so bash can measure their length.
+      # GitHub's log masking would hide them even if we tried to print them.
+      - name: Check which secrets are SET vs EMPTY
+        shell: bash
+        env:
+          _JWT_SERVER_KEY: ${{ secrets.JWT_SERVER_KEY }}
+          _CONSUMER_KEY: ${{ secrets.CONSUMER_KEY }}
+          _DEPLOYMENT_USER: ${{ secrets.DEPLOYMENT_USER }}
+        run: |
+          echo "============================================"
+          echo "  Environment : ${{ github.event.inputs.environment }}"
+          echo "============================================"
+          echo ""
+          echo "--- Secrets (SET / EMPTY check only) ---"
+
+          check_secret() {
+            local name="$1"
+            local value="$2"
+            if [ -z "$value" ]; then
+              echo "  ❌  $name : NOT SET or EMPTY"
+            else
+              echo "  ✅  $name : SET  (length=${#value})"
+            fi
+          }
+
+          check_secret "JWT_SERVER_KEY"  "$_JWT_SERVER_KEY"
+          check_secret "CONSUMER_KEY"    "$_CONSUMER_KEY"
+          check_secret "DEPLOYMENT_USER" "$_DEPLOYMENT_USER"
+
+      # ── 2. Variable values (non-sensitive) ─────────────────────────
+      # vars.* are not masked; it is safe to print them directly.
+      - name: Print variable values
+        shell: bash
+        run: |
+          echo ""
+          echo "--- Variables (values are printed — not sensitive) ---"
+          echo "  INSTANCE_URL     : '${{ vars.INSTANCE_URL }}'"
+          echo ""
+          echo "--- Common misconfigurations ---"
+
+          if [ -z "${{ vars.INSTANCE_URL }}" ]; then
+            echo "  ❌  INSTANCE_URL is EMPTY."
+            echo "      This is the root cause of the 'Expected a valid url' error."
+            echo "      Fix: Settings → Environments → ${{ github.event.inputs.environment }}"
+            echo "           → Variables (not Secrets!) → Add INSTANCE_URL"
+            echo "      Value should be: https://login.salesforce.com"
+            echo "      or your org's My Domain URL, e.g. https://mycompany.my.salesforce.com"
+          else
+            echo "  ✅  INSTANCE_URL is set."
+            # Minimal sanity check: must start with https://
+            if [[ "${{ vars.INSTANCE_URL }}" != https://* ]]; then
+              echo "  ⚠️   INSTANCE_URL does not start with https:// — this will likely fail."
+            fi
+          fi
+
+      # ── 3. End-to-end JWT authentication test ──────────────────────
+      - name: Install Salesforce CLI
+        shell: bash
+        run: npm install --global @salesforce/cli
+
+      - name: Write JWT key to file
+        shell: bash
+        env:
+          _JWT_SERVER_KEY: ${{ secrets.JWT_SERVER_KEY }}
+        run: |
+          if [ -z "$_JWT_SERVER_KEY" ]; then
+            echo "❌ JWT_SERVER_KEY is empty — skipping auth test."
+            echo "   Set the secret first, then re-run this workflow."
+            exit 1
+          fi
+          echo "$_JWT_SERVER_KEY" > server.key
+          chmod 600 server.key
+          echo "✅ JWT key written to server.key"
+
+          # Validate the key file looks like a PEM private key.
+          if ! head -1 server.key | grep -q "BEGIN"; then
+            echo "⚠️  server.key does not look like a PEM private key."
+            echo "   Make sure the secret contains the full key including"
+            echo "   -----BEGIN RSA PRIVATE KEY----- / -----END RSA PRIVATE KEY-----"
+          fi
+
+      - name: Test JWT authentication
+        shell: bash
+        run: |
+          echo ""
+          echo "--- Attempting JWT login ---"
+          echo "  client-id    : ${{ secrets.CONSUMER_KEY }}"
+          echo "  username     : ${{ secrets.DEPLOYMENT_USER }}"
+          echo "  instance-url : ${{ vars.INSTANCE_URL }}"
+          echo ""
+
+          if sf org login jwt \
+              --client-id    "${{ secrets.CONSUMER_KEY }}" \
+              --jwt-key-file server.key \
+              --username     "${{ secrets.DEPLOYMENT_USER }}" \
+              --instance-url "${{ vars.INSTANCE_URL }}" \
+              --alias        debug-org; then
+            echo ""
+            echo "✅  JWT authentication SUCCEEDED."
+          else
+            echo ""
+            echo "❌  JWT authentication FAILED."
+            echo "    Check the output above for the specific error."
+            exit 1
+          fi
+
+      - name: Display authenticated org details
+        if: success()
+        shell: bash
+        run: sf org display --target-org debug-org
+
+      # Always runs — removes key even when auth fails.
+      - name: Remove JWT key file
+        if: always()
+        shell: bash
+        run: rm -f server.key
