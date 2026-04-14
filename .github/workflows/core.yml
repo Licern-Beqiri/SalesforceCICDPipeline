@@ -61,8 +61,8 @@ jobs:
         run: |
           mkdir -p delta
           sf sgd source delta \
+            --from "$FROM_REF" \
             --to HEAD \
-            --from ${{ env.FROM_REF }} \
             --output-dir delta \
             --generate-delta
 
