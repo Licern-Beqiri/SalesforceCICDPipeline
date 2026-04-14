@@ -43,6 +43,29 @@ jobs:
         shell: bash
         run: sf version
 
+      - name: Install sfdx-git-delta plugin
+        shell: bash
+        run: sf plugins install sfdx-git-delta
+
+      - name: Determine delta commit reference
+        shell: bash
+        run: |
+          if ["${{ inputs.mode }}" = "validate"]; then
+            echo "FROM_REF=origin/${{ github.base_ref }}" >> $GITHUB_ENV
+          else
+            echo "FROM_REF=HEAD~1" >> $GITHUB_ENV
+          fi
+
+      - name: Generate delta package
+        shell: bash
+        run: |
+          mkdir -p delta
+          sf sgd source delta \
+            --to HEAD \
+            --from ${{ env.FROM_REF }} \
+            --output-dir delta \
+            --generate-delta
+
       - name: Write JWT key to file
         shell: bash
         run: |
@@ -68,7 +91,7 @@ jobs:
         shell: bash
         run: |
           sf project deploy validate \
-            --source-dir  force-app \
+            --manifest  delta/package/package.xml \
             --target-org  ci-org \
             --test-level  RunLocalTests \
             --wait        60
@@ -78,10 +101,31 @@ jobs:
         shell: bash
         run: |
           sf project deploy start \
-            --source-dir  force-app \
+            --manifest  delta/package/package.xml \
             --target-org  ci-org \
             --test-level  RunLocalTests \
             --wait        60
+
+      - name: Deploy destructive changes (if present)
+        if: inputs.mode == 'deploy'
+        shell: bash
+        run: |
+          if [ -f delta/destruciveChanges/destructiveChanges.xml ]; then
+            sf project deploy start \
+              --manifest delta/destructiveChanges/destructiveChanges.xml \
+              --target-org ci-org \
+              --wait 60
+          else 
+            echo "No destructive changes to deploy."
+          fi
+
+      - name: Check if delta is empty
+        shell: bash
+        run: |
+          if [ ! -f delta/package/package.xml ]; then
+            echo "No changes in metadata detected since last commit. Skipping deployment."
+            exit 0
+          fi
 
       - name: Remove JWT key file
         if: always()
