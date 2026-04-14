@@ -44,7 +44,7 @@ jobs:
         shell: bash
         run: |
           npm install --global sfdx-git-delta
-          npm bin -g >> $GITHUB_PATH
+          echo "$(npm prefix -g)/bin" >> $GITHUB_PATH
 
       - name: Verify Salesforce CLI and sfdx-git-delta versions
         shell: bash
