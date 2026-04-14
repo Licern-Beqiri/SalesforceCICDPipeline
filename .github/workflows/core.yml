@@ -1,0 +1,89 @@
+name: Salesforce Core (Reusable)
+
+on:
+  workflow_call:
+    inputs:
+      mode:
+        description: "'validate' for PR dry-run, 'deploy' for post-merge"
+        required: true
+        type: string
+      environment:
+        description: "GitHub Environment to activate: 'nonprod' or 'prod'"
+        required: true
+        type: string
+
+jobs:
+  sf-job:
+    name: Salesforce ${{ inputs.mode == 'deploy' && 'Deploy' || 'Validate' }} → ${{ inputs.environment }}
+    runs-on: ubuntu-latest
+
+    timeout-minutes: 70
+
+    environment: ${{ inputs.environment }}
+
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install Salesforce CLI
+        shell: bash
+        run: npm install --global @salesforce/cli
+
+      - name: Verify Salesforce CLI
+        shell: bash
+        run: sf version
+
+      - name: Write JWT key to file
+        shell: bash
+        run: |
+          echo "${{ secrets.JWT_SERVER_KEY }}" > server.key
+          chmod 600 server.key
+
+      - name: Authenticate to Salesforce with JWT
+        shell: bash
+        run: |
+          sf org login jwt \
+            --client-id    "${{ secrets.CONSUMER_KEY }}" \
+            --jwt-key-file server.key \
+            --username     "${{ secrets.DEPLOYMENT_USER }}" \
+            --instance-url "${{ vars.INSTANCE_URL }}" \
+            --alias        ci-org
+
+      - name: Verify authenticated org
+        shell: bash
+        run: sf org display --target-org ci-org
+
+      - name: Validate deployment (dry-run, no metadata committed)
+        if: inputs.mode == 'validate'
+        shell: bash
+        run: |
+          sf project deploy validate \
+            --source-dir  force-app \
+            --target-org  ci-org \
+            --test-level  RunLocalTests \
+            --wait        60
+
+      - name: Deploy metadata
+        if: inputs.mode == 'deploy'
+        shell: bash
+        run: |
+          sf project deploy start \
+            --source-dir  force-app \
+            --target-org  ci-org \
+            --test-level  RunLocalTests \
+            --wait        60
+
+      - name: Remove JWT key file
+        if: always()
+        shell: bash
+        run: rm -f server.key

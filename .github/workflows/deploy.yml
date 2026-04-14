@@ -9,58 +9,8 @@ on:
 
 jobs:
   deploy:
-    runs-on: ubuntu-latest
-
-    environment:
-      name: ${{ github.ref_name == 'main' && 'prod' || 'nonprod' }}
-
-    permissions:
-      contents: read
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: "20"
-
-      - name: Install Salesforce CLI
-        shell: bash
-        run: npm install --global @salesforce/cli
-
-      - name: Verify Salesforce CLI
-        shell: bash
-        run: sf version
-
-      - name: Write JWT key to file
-        shell: bash
-        run: |
-          echo "${{ secrets.JWT_SERVER_KEY }}" > server.key
-          chmod 600 server.key
-
-      - name: Authenticate to Salesforce with JWT
-        shell: bash
-        run: |
-          sf org login jwt \
-            --client-id "${{ secrets.CONSUMER_KEY }}" \
-            --jwt-key-file server.key \
-            --username "${{ secrets.DEPLOYMENT_USER }}" \
-            --instance-url "${{ vars.INSTANCE_URL }}" \
-            --alias ci-org
-
-      - name: Verify authenticated org
-        shell: bash
-        run: sf org display --target-org ci-org
-
-      - name: Deploy metadata
-        shell: bash
-        run: |
-          sf project deploy start \
-            --source-dir force-app \
-            --target-org ci-org \
-            --test-level RunLocalTests \
-            --wait 60
+    uses: ./.github/workflows/core.yml
+    with:
+      mode: deploy
+      environment: ${{ github.ref_name == 'main' && 'prod' || 'nonprod' }}
+    secrets: inherit
