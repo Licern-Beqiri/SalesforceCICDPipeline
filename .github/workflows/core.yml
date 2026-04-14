@@ -44,14 +44,10 @@ jobs:
         shell: bash
         run: |
           npm install --global sfdx-git-delta
-          echo "--- npm prefix -g ---"
-          npm prefix -g
-          echo "--- bin dir contents ---"
-          ls -la $(npm prefix -g)/bin/ | grep -i sgd || echo "sgd not in bin"
-          echo "--- global node_modules sgd bin field ---"
-          cat $(npm prefix -g)/lib/node_modules/sfdx-git-delta/package.json | grep -A5 '"bin"'
-          echo "--- find sgd anywhere ---"
-          find / -name "sgd" 2>/dev/null | grep -v proc || echo "sgd not found anywhere"
+          SGD_PATH="$(npm prefix -g)/lib/node_modules/sfdx-git-delta/bin/sgd.js"
+          echo "sgd.js resolved to: $SGD_PATH"
+          ls -la "$SGD_PATH"
+          echo "SGD_BIN=node $SGD_PATH" >> $GITHUB_ENV
 
       - name: Verify Salesforce CLI and sfdx-git-delta versions
         shell: bash
@@ -60,6 +56,7 @@ jobs:
           sf version
           echo "-- sfdx-git-delta --"
           $SGD_BIN --version
+
       - name: Write JWT key to file
         shell: bash
         run: |
@@ -87,12 +84,9 @@ jobs:
           TAG="last-deploy-${{ inputs.environment }}"
 
           if [ "${{ inputs.mode }}" = "validate" ]; then
-            # github.event.pull_request is available here because reusable
-            # workflows inherit the caller's event context.
             FROM="${{ github.event.pull_request.base.sha }}"
             SOURCE="PR base SHA (github.event.pull_request.base.sha)"
           else
-            # Deploy mode — resolve SHA from the environment-specific tag.
             if git rev-parse --verify "refs/tags/$TAG" > /dev/null 2>&1; then
               FROM=$(git rev-list -n 1 "refs/tags/$TAG")
               SOURCE="git tag '$TAG'"
@@ -136,9 +130,6 @@ jobs:
           cat delta/destructiveChanges/destructiveChanges.xml 2>/dev/null \
             || echo "(file not present — no components were deleted)"
 
-          # Detect whether the package has any metadata types to deploy.
-          # If package.xml exists but contains no <types> the manifest is
-          # empty — deploying it would be a no-op and can confuse the CLI.
           if grep -q "<types>" delta/package/package.xml 2>/dev/null; then
             echo ""
             echo "Delta package contains metadata changes — proceeding."
@@ -157,8 +148,6 @@ jobs:
           steps.sgd.outputs.has_changes == 'true'
         shell: bash
         run: |
-          # Only pass --pre-destructive-changes if the file actually exists.
-          # The flag with a missing file causes an sf CLI error.
           DESTRUCTIVE=""
           if [ -f delta/destructiveChanges/destructiveChanges.xml ]; then
             DESTRUCTIVE="--pre-destructive-changes delta/destructiveChanges/destructiveChanges.xml"
