@@ -39,7 +39,7 @@ jobs:
         env:
           _JWT_SERVER_KEY: ${{ secrets.JWT_SERVER_KEY }}
           _CONSUMER_KEY: ${{ secrets.CONSUMER_KEY }}
-          _DEPLOYMENT_USER: ${{ secrets.DEPLOYMENT_USER }}
+          _DEPLOYMENT_USER_NAME: ${{ secrets.DEPLOYMENT_USER_NAME }}
         run: |
           echo "============================================"
           echo "  Environment : ${{ github.event.inputs.environment }}"
@@ -59,7 +59,7 @@ jobs:
 
           check_secret "JWT_SERVER_KEY"  "$_JWT_SERVER_KEY"
           check_secret "CONSUMER_KEY"    "$_CONSUMER_KEY"
-          check_secret "DEPLOYMENT_USER" "$_DEPLOYMENT_USER"
+          check_secret "DEPLOYMENT_USER_NAME" "$_DEPLOYMENT_USER_NAME"
 
       # ── 2. Variable values (non-sensitive) ─────────────────────────
       # vars.* are not masked; it is safe to print them directly.
@@ -119,14 +119,14 @@ jobs:
           echo ""
           echo "--- Attempting JWT login ---"
           echo "  client-id    : ${{ secrets.CONSUMER_KEY }}"
-          echo "  username     : ${{ secrets.DEPLOYMENT_USER }}"
+          echo "  username     : ${{ secrets.DEPLOYMENT_USER_NAME }}"
           echo "  instance-url : ${{ vars.INSTANCE_URL }}"
           echo ""
 
           if sf org login jwt \
               --client-id    "${{ secrets.CONSUMER_KEY }}" \
               --jwt-key-file server.key \
-              --username     "${{ secrets.DEPLOYMENT_USER }}" \
+              --username     "${{ secrets.DEPLOYMENT_USER_NAME }}" \
               --instance-url "${{ vars.INSTANCE_URL }}" \
               --alias        debug-org; then
             echo ""
