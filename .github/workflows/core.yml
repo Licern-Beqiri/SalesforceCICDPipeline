@@ -45,7 +45,7 @@ jobs:
 
       - name: Install sfdx-git-delta plugin
         shell: bash
-        run: sf plugins install sfdx-git-delta --y
+        run: sf plugins install sfdx-git-delta --yes
 
       - name: Determine delta commit reference
         shell: bash
