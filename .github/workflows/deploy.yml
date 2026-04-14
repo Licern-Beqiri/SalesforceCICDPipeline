@@ -12,5 +12,5 @@ jobs:
     uses: ./.github/workflows/core.yml
     with:
       mode: deploy
-      environment: ${{ github.ref_name == 'main' && 'prod' || 'nonprod' }}
+      environment: ${{ github.ref_name == 'main' && 'Production' || 'Non-Production' }}
     secrets: inherit
