@@ -42,7 +42,9 @@ jobs:
 
       - name: Install sfdx-git-delta
         shell: bash
-        run: npm install --global sfdx-git-delta
+        run: |
+          npm install --global sfdx-git-delta
+          npm bin -g >> $GITHUB_PATH
 
       - name: Verify Salesforce CLI and sfdx-git-delta versions
         shell: bash
@@ -50,7 +52,7 @@ jobs:
           echo "-- Salesforce CLI --"
           sf version
           echo "-- sfdx-git-delta --"
-          npx sfdx-git-delta --version
+          sgd --version
       - name: Write JWT key to file
         shell: bash
         run: |
@@ -111,8 +113,7 @@ jobs:
         shell: bash
         run: |
           mkdir -p delta
-
-          npx sfdx-git-delta source delta \
+          sgd source delta \
             --to             HEAD \
             --from           "${{ steps.delta.outputs.from_sha }}" \
             --output         ./delta \
