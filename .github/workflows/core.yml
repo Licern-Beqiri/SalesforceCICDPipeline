@@ -19,8 +19,6 @@ jobs:
     timeout-minutes: 70
     environment: ${{ inputs.environment }}
 
-    # sgd writes only to the runner filesystem (./delta), never back to the repo.
-    # contents: read is sufficient. Do NOT bump this to write.
     permissions:
       contents: read
 
@@ -32,7 +30,6 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          # Required: sgd needs full git history to diff between commits.
           fetch-depth: 0
 
       - name: Set up Node.js
@@ -48,8 +45,6 @@ jobs:
         shell: bash
         run: sf version
 
-      # sgd is an sf CLI plugin. It must be installed via `sf plugins install`,
-      # NOT via `npm install -g`. Invocation is `sf sgd source delta ...`.
       - name: Install sfdx-git-delta plugin
         shell: bash
         run: |
@@ -82,7 +77,6 @@ jobs:
         shell: bash
         run: sf org display --target-org ci-org
 
-      # Decide what commit range to diff, based on the triggering event.
       - name: Determine delta commit range
         id: range
         shell: bash
@@ -158,8 +152,6 @@ jobs:
             echo "::notice::No deployable metadata changes in this commit range."
           fi
 
-      # ---------- VALIDATE ----------
-
       - name: Validate (full source — manual / first push)
         if: inputs.mode == 'validate' && steps.range.outputs.use_delta != 'true'
         shell: bash
@@ -187,8 +179,6 @@ jobs:
         if: inputs.mode == 'validate' && steps.range.outputs.use_delta == 'true' && steps.delta.outputs.has_changes != 'true' && steps.delta.outputs.has_destructive != 'true'
         shell: bash
         run: echo "::notice::No metadata changes to validate."
-
-      # ---------- DEPLOY ----------
 
       - name: Deploy (full source — manual / first push)
         if: inputs.mode == 'deploy' && steps.range.outputs.use_delta != 'true'
