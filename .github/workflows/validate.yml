@@ -12,5 +12,5 @@ jobs:
     uses: ./.github/workflows/core.yml
     with:
       mode: validate
-      environment: ${{ github.ref_name == 'main' && 'Production' || 'Non-Production' }}
+      environment: ${{github.ref_name == 'main' && 'Production' || 'Non-Production'}}
     secrets: inherit
