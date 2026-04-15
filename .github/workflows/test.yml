@@ -28,9 +28,9 @@ jobs:
         shell: bash
         run: |
           test -f sfdx-project.json \
-            || {echo "::error::sfdx-project.json is missing"; exit 1;}
+            || { echo "::error::sfdx-project.json is missing"; exit 1; }
           test -d force-app \
-            || {echo "::error::force-app directory is missing"; exit 1;}
+            || { echo "::error::force-app directory is missing"; exit 1; }
 
       - name: Install project dependencies
         shell: bash
