@@ -10,8 +10,6 @@ on:
 jobs:
   deploy:
     uses: ./.github/workflows/core.yml
-    permissions:
-      contents: write
     with:
       mode: deploy
       environment: ${{ github.ref_name == 'main' && 'Production' || 'Non-Production' }}

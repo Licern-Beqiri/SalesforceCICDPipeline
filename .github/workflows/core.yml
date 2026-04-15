@@ -16,20 +16,24 @@ jobs:
   sf-job:
     name: Salesforce ${{ inputs.mode == 'deploy' && 'Deploy' || 'Validate' }} → ${{ inputs.environment }}
     runs-on: ubuntu-latest
-
     timeout-minutes: 70
-
     environment: ${{ inputs.environment }}
 
+    # sgd writes only to the runner filesystem (./delta), never back to the repo.
+    # contents: read is sufficient. Do NOT bump this to write.
     permissions:
-      contents: write
+      contents: read
+
+    env:
+      SF_AUTOUPDATE_DISABLE: "true"
+      SF_DISABLE_TELEMETRY: "true"
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
+          # Required: sgd needs full git history to diff between commits.
           fetch-depth: 0
-          token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
@@ -40,22 +44,23 @@ jobs:
         shell: bash
         run: npm install --global @salesforce/cli
 
-      - name: Install sfdx-git-delta
+      - name: Verify Salesforce CLI
         shell: bash
-        run: |
-          npm install --global sfdx-git-delta
-          SGD_PATH="$(npm prefix -g)/lib/node_modules/sfdx-git-delta/bin/sgd.js"
-          echo "sgd.js resolved to: $SGD_PATH"
-          ls -la "$SGD_PATH"
-          echo "SGD_BIN=node $SGD_PATH" >> $GITHUB_ENV
+        run: sf version
 
-      - name: Verify Salesforce CLI and sfdx-git-delta versions
+      # sgd is an sf CLI plugin. It must be installed via `sf plugins install`,
+      # NOT via `npm install -g`. Invocation is `sf sgd source delta ...`.
+      - name: Install sfdx-git-delta plugin
         shell: bash
         run: |
-          echo "-- Salesforce CLI --"
-          sf version
-          echo "-- sfdx-git-delta --"
-          $SGD_BIN --version
+          echo y | sf plugins install sfdx-git-delta
+          echo "----- Installed plugins -----"
+          sf plugins
+          # Hard fail early if the plugin didn't register correctly.
+          sf plugins inspect sfdx-git-delta > /dev/null \
+            || { echo "::error::sfdx-git-delta plugin failed to install"; exit 1; }
+          sf sgd source delta --help > /dev/null \
+            || { echo "::error::'sf sgd source delta' is not registered"; exit 1; }
 
       - name: Write JWT key to file
         shell: bash
@@ -77,91 +82,86 @@ jobs:
         shell: bash
         run: sf org display --target-org ci-org
 
-      - name: Resolve delta base SHA
+      # Decide what commit range to diff, based on the triggering event.
+      - name: Determine delta commit range
+        id: range
+        shell: bash
+        run: |
+          set -euo pipefail
+          EVENT="${{ github.event_name }}"
+
+          if [[ "$EVENT" == "pull_request" ]]; then
+            FROM_REF="origin/${{ github.base_ref }}"
+            TO_REF="HEAD"
+            USE_DELTA="true"
+          elif [[ "$EVENT" == "push" ]]; then
+            BEFORE="${{ github.event.before }}"
+            if [[ "$BEFORE" == "0000000000000000000000000000000000000000" || -z "$BEFORE" ]]; then
+              echo "::warning::No previous commit on this branch; falling back to full deploy."
+              USE_DELTA="false"; FROM_REF=""; TO_REF=""
+            else
+              FROM_REF="$BEFORE"
+              TO_REF="${{ github.sha }}"
+              USE_DELTA="true"
+            fi
+          else
+            # workflow_dispatch (manual): no natural diff base → do a full deploy.
+            echo "::notice::Manual run detected; performing a full deploy of force-app."
+            USE_DELTA="false"; FROM_REF=""; TO_REF=""
+          fi
+
+          echo "from_ref=$FROM_REF"   >> "$GITHUB_OUTPUT"
+          echo "to_ref=$TO_REF"       >> "$GITHUB_OUTPUT"
+          echo "use_delta=$USE_DELTA" >> "$GITHUB_OUTPUT"
+
+          echo "FROM = $FROM_REF"
+          echo "TO   = $TO_REF"
+          echo "USE_DELTA = $USE_DELTA"
+
+      - name: Generate delta package
+        if: steps.range.outputs.use_delta == 'true'
         id: delta
         shell: bash
         run: |
-          TAG="last-deploy-${{ inputs.environment }}"
-
-          if [ "${{ inputs.mode }}" = "validate" ]; then
-            FROM="${{ github.event.pull_request.base.sha }}"
-            SOURCE="PR base SHA (github.event.pull_request.base.sha)"
-          else
-            if git rev-parse --verify "refs/tags/$TAG" > /dev/null 2>&1; then
-              FROM=$(git rev-list -n 1 "refs/tags/$TAG")
-              SOURCE="git tag '$TAG'"
-            else
-              FROM=""
-              SOURCE="tag '$TAG' not found — this is likely the first deploy"
-            fi
-          fi
-
-          echo ""
-          if [ -z "$FROM" ]; then
-            echo "No base SHA available ($SOURCE)."
-            echo "Falling back to full force-app deploy."
-            echo "deploy_mode=full" >> "$GITHUB_OUTPUT"
-          else
-            echo "Base SHA : $FROM"
-            echo "Source   : $SOURCE"
-            echo "deploy_mode=delta" >> "$GITHUB_OUTPUT"
-            echo "from_sha=$FROM"    >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Generate sfdx-git-delta package
-        id: sgd
-        if: steps.delta.outputs.deploy_mode == 'delta'
-        shell: bash
-        run: |
+          set -euo pipefail
           mkdir -p delta
-          $SGD_BIN source delta \
-            --to             HEAD \
-            --from           "${{ steps.delta.outputs.from_sha }}" \
-            --output         ./delta \
-            --generate-delta \
-            --source-dir     force-app
 
-          echo ""
-          echo "--- delta/package/package.xml ---"
-          cat delta/package/package.xml
+          # --generate-delta is REQUIRED to actually copy changed source files.
+          # Without it you only get a package.xml and the deploy will have nothing to send.
+          sf sgd source delta \
+            --from        "${{ steps.range.outputs.from_ref }}" \
+            --to          "${{ steps.range.outputs.to_ref }}" \
+            --output-dir  delta \
+            --source-dir  force-app \
+            --generate-delta
 
-          echo ""
-          echo "--- delta/destructiveChanges/destructiveChanges.xml ---"
-          cat delta/destructiveChanges/destructiveChanges.xml 2>/dev/null \
-            || echo "(file not present — no components were deleted)"
+          echo "----- delta/package/package.xml -----"
+          cat delta/package/package.xml || true
+          echo "----- delta/destructiveChanges/destructiveChanges.xml -----"
+          cat delta/destructiveChanges/destructiveChanges.xml || true
+          echo "----- delta tree -----"
+          find delta -maxdepth 4 -type f | sort
 
-          if grep -q "<types>" delta/package/package.xml 2>/dev/null; then
-            echo ""
-            echo "Delta package contains metadata changes — proceeding."
-            echo "has_changes=true" >> "$GITHUB_OUTPUT"
-          else
-            echo ""
-            echo "Delta package is empty — no metadata changed between commits."
-            echo "Skipping deploy/validate."
-            echo "has_changes=false" >> "$GITHUB_OUTPUT"
+          HAS_CHANGES="false"
+          HAS_DESTRUCTIVE="false"
+          if [ -f delta/package/package.xml ] && grep -q '<types>' delta/package/package.xml; then
+            HAS_CHANGES="true"
+          fi
+          if [ -f delta/destructiveChanges/destructiveChanges.xml ] && grep -q '<types>' delta/destructiveChanges/destructiveChanges.xml; then
+            HAS_DESTRUCTIVE="true"
           fi
 
-      - name: Validate delta (dry-run)
-        if: |
-          inputs.mode == 'validate' &&
-          steps.delta.outputs.deploy_mode == 'delta' &&
-          steps.sgd.outputs.has_changes == 'true'
-        shell: bash
-        run: |
-          DESTRUCTIVE=""
-          if [ -f delta/destructiveChanges/destructiveChanges.xml ]; then
-            DESTRUCTIVE="--pre-destructive-changes delta/destructiveChanges/destructiveChanges.xml"
+          echo "has_changes=$HAS_CHANGES"         >> "$GITHUB_OUTPUT"
+          echo "has_destructive=$HAS_DESTRUCTIVE" >> "$GITHUB_OUTPUT"
+
+          if [[ "$HAS_CHANGES" == "false" && "$HAS_DESTRUCTIVE" == "false" ]]; then
+            echo "::notice::No deployable metadata changes in this commit range."
           fi
 
-          sf project deploy validate \
-            --manifest    delta/package/package.xml \
-            --target-org  ci-org \
-            --test-level  RunLocalTests \
-            $DESTRUCTIVE \
-            --wait        60
+      # ---------- VALIDATE ----------
 
-      - name: Validate full force-app (dry-run — no delta base available)
-        if: inputs.mode == 'validate' && steps.delta.outputs.deploy_mode == 'full'
+      - name: Validate (full source — manual / first push)
+        if: inputs.mode == 'validate' && steps.range.outputs.use_delta != 'true'
         shell: bash
         run: |
           sf project deploy validate \
@@ -170,27 +170,28 @@ jobs:
             --test-level  RunLocalTests \
             --wait        60
 
-      - name: Deploy delta metadata
-        if: |
-          inputs.mode == 'deploy' &&
-          steps.delta.outputs.deploy_mode == 'delta' &&
-          steps.sgd.outputs.has_changes == 'true'
+      - name: Validate (delta)
+        if: inputs.mode == 'validate' && steps.range.outputs.use_delta == 'true' && (steps.delta.outputs.has_changes == 'true' || steps.delta.outputs.has_destructive == 'true')
         shell: bash
         run: |
-          DESTRUCTIVE=""
-          if [ -f delta/destructiveChanges/destructiveChanges.xml ]; then
-            DESTRUCTIVE="--pre-destructive-changes delta/destructiveChanges/destructiveChanges.xml"
+          ARGS=(--manifest delta/package/package.xml
+                --target-org ci-org
+                --test-level RunLocalTests
+                --wait 60)
+          if [[ "${{ steps.delta.outputs.has_destructive }}" == "true" ]]; then
+            ARGS+=(--post-destructive-changes delta/destructiveChanges/destructiveChanges.xml)
           fi
+          sf project deploy validate "${ARGS[@]}"
 
-          sf project deploy start \
-            --manifest    delta/package/package.xml \
-            --target-org  ci-org \
-            --test-level  RunLocalTests \
-            $DESTRUCTIVE \
-            --wait        60
+      - name: Validate skipped (no changes)
+        if: inputs.mode == 'validate' && steps.range.outputs.use_delta == 'true' && steps.delta.outputs.has_changes != 'true' && steps.delta.outputs.has_destructive != 'true'
+        shell: bash
+        run: echo "::notice::No metadata changes to validate."
 
-      - name: Deploy full force-app (first run — no tag exists yet)
-        if: inputs.mode == 'deploy' && steps.delta.outputs.deploy_mode == 'full'
+      # ---------- DEPLOY ----------
+
+      - name: Deploy (full source — manual / first push)
+        if: inputs.mode == 'deploy' && steps.range.outputs.use_delta != 'true'
         shell: bash
         run: |
           sf project deploy start \
@@ -199,19 +200,23 @@ jobs:
             --test-level  RunLocalTests \
             --wait        60
 
-      - name: Tag successful deploy commit
-        if: |
-          inputs.mode == 'deploy' &&
-          success() &&
-          (steps.delta.outputs.deploy_mode == 'full' || steps.sgd.outputs.has_changes == 'true')
+      - name: Deploy (delta)
+        if: inputs.mode == 'deploy' && steps.range.outputs.use_delta == 'true' && (steps.delta.outputs.has_changes == 'true' || steps.delta.outputs.has_destructive == 'true')
         shell: bash
         run: |
-          TAG="last-deploy-${{ inputs.environment }}"
-          git config user.name  "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git tag -f "$TAG"
-          git push origin -f "refs/tags/$TAG"
-          echo "Tag '$TAG' → $(git rev-parse HEAD)"
+          ARGS=(--manifest delta/package/package.xml
+                --target-org ci-org
+                --test-level RunLocalTests
+                --wait 60)
+          if [[ "${{ steps.delta.outputs.has_destructive }}" == "true" ]]; then
+            ARGS+=(--post-destructive-changes delta/destructiveChanges/destructiveChanges.xml)
+          fi
+          sf project deploy start "${ARGS[@]}"
+
+      - name: Deploy skipped (no changes)
+        if: inputs.mode == 'deploy' && steps.range.outputs.use_delta == 'true' && steps.delta.outputs.has_changes != 'true' && steps.delta.outputs.has_destructive != 'true'
+        shell: bash
+        run: echo "::notice::No metadata changes to deploy."
 
       - name: Remove JWT key file
         if: always()
