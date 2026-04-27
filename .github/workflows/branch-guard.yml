@@ -1,0 +1,42 @@
+name: Branch Guard
+
+on:
+  pull_request:
+    branches:
+      - dev
+      - main
+
+jobs:
+  check:
+    name: Validate branch → target
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+
+    permissions:
+      contents: read
+
+    steps:
+      - name: Enforce branching rules
+        shell: bash
+        run: |
+          set -euo pipefail
+          SOURCE="${{ github.head_ref }}"
+          TARGET="${{ github.base_ref }}"
+
+          echo "PR: $SOURCE → $TARGET"
+
+          # feature/* branches may only target dev
+          # release/* branches may only target main
+          # Anything else (hotfix, docs, etc.) is allowed into either
+
+          if [[ "$SOURCE" == feature/* && "$TARGET" != "dev" ]]; then
+            echo "::error::feature/* branches must PR into dev, not $TARGET."
+            exit 1
+          fi
+
+          if [[ "$SOURCE" == release/* && "$TARGET" != "main" ]]; then
+            echo "::error::release/* branches must PR into main, not $TARGET."
+            exit 1
+          fi
+
+          echo "Branch rule passed: $SOURCE → $TARGET"
