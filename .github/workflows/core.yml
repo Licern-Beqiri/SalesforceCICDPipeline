@@ -19,12 +19,12 @@ jobs:
     timeout-minutes: 70
     environment: ${{ inputs.environment }}
 
+    concurrency:
+      group: sf-${{ inputs.mode }}-${{ inputs.environment }}
+      cancel-in-progress: ${{ inputs.mode == 'validate' }}
+
     permissions:
       contents: read
-
-    env:
-      SF_AUTOUPDATE_DISABLE: "true"
-      SF_DISABLE_TELEMETRY: "true"
 
     steps:
       - name: Checkout repository
@@ -39,7 +39,7 @@ jobs:
 
       - name: Install Salesforce CLI
         shell: bash
-        run: npm install --global @salesforce/cli
+        run: npm install --global @salesforce/cli@2.113.6
 
       - name: Verify Salesforce CLI
         shell: bash
@@ -48,10 +48,9 @@ jobs:
       - name: Install sfdx-git-delta plugin
         shell: bash
         run: |
-          echo y | sf plugins install sfdx-git-delta
+          echo 'y' | sf plugins install sfdx-git-delta
           echo "----- Installed plugins -----"
           sf plugins
-          # Hard fail early if the plugin didn't register correctly.
           sf plugins inspect sfdx-git-delta > /dev/null \
             || { echo "::error::sfdx-git-delta plugin failed to install"; exit 1; }
           sf sgd source delta --help > /dev/null \
@@ -88,20 +87,18 @@ jobs:
             FROM_REF="origin/${{ github.base_ref }}"
             TO_REF="HEAD"
             USE_DELTA="true"
+
           elif [[ "$EVENT" == "push" ]]; then
-            BEFORE="${{ github.event.before }}"
-            if [[ "$BEFORE" == "0000000000000000000000000000000000000000" || -z "$BEFORE" ]]; then
-              echo "::warning::No previous commit on this branch; falling back to full deploy."
-              USE_DELTA="false"; FROM_REF=""; TO_REF=""
-            else
-              FROM_REF="$BEFORE"
-              TO_REF="${{ github.sha }}"
-              USE_DELTA="true"
-            fi
+            FROM_REF="HEAD~1"
+            TO_REF="HEAD"
+            USE_DELTA="true"
+
           else
-            # workflow_dispatch (manual): no natural diff base → do a full deploy.
+            # workflow_dispatch (manual): no natural diff base → full deploy.
             echo "::notice::Manual run detected; performing a full deploy of force-app."
-            USE_DELTA="false"; FROM_REF=""; TO_REF=""
+            USE_DELTA="false"
+            FROM_REF=""
+            TO_REF=""
           fi
 
           echo "from_ref=$FROM_REF"   >> "$GITHUB_OUTPUT"
@@ -120,8 +117,6 @@ jobs:
           set -euo pipefail
           mkdir -p delta
 
-          # --generate-delta is REQUIRED to actually copy changed source files.
-          # Without it you only get a package.xml and the deploy will have nothing to send.
           sf sgd source delta \
             --from        "${{ steps.range.outputs.from_ref }}" \
             --to          "${{ steps.range.outputs.to_ref }}" \
@@ -152,7 +147,7 @@ jobs:
             echo "::notice::No deployable metadata changes in this commit range."
           fi
 
-      - name: Validate (full source — manual / first push)
+      - name: Validate (full source — manual)
         if: inputs.mode == 'validate' && steps.range.outputs.use_delta != 'true'
         shell: bash
         run: |
@@ -180,7 +175,7 @@ jobs:
         shell: bash
         run: echo "::notice::No metadata changes to validate."
 
-      - name: Deploy (full source — manual / first push)
+      - name: Deploy (full source — manual)
         if: inputs.mode == 'deploy' && steps.range.outputs.use_delta != 'true'
         shell: bash
         run: |
