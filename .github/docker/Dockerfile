@@ -6,6 +6,10 @@ RUN apt-get update \
 
 RUN npm install --global @salesforce/cli@2.113.6
 
+# Pin the sf data directory to a fixed path so plugins survive
+# GitHub Actions overriding HOME at runtime.
+ENV SF_DATA_DIR=/sf-data
+
 RUN echo 'y' | sf plugins install sfdx-git-delta
 
 RUN sf version \
