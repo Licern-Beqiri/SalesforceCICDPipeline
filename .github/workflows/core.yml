@@ -13,15 +13,33 @@ on:
         type: string
 
 jobs:
+  resolve-image:
+    name: Resolve container image
+    runs-on: ubuntu-latest
+    outputs:
+      image: ${{ steps.img.outputs.name }}
+    steps:
+      - name: Lowercase image path
+        id: img
+        shell: bash
+        run: echo "name=ghcr.io/${GITHUB_REPOSITORY,,}/sf-ci:latest" >> "$GITHUB_OUTPUT"
+
   sf-job:
     name: Salesforce ${{ inputs.mode == 'deploy' && 'Deploy' || 'Validate' }} → ${{ inputs.environment }}
+    needs: resolve-image
     runs-on: ubuntu-latest
     timeout-minutes: 70
     environment: ${{ inputs.environment }}
 
+    container:
+      image: ${{ needs.resolve-image.outputs.image }}
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+
     concurrency:
-      group: sf-${{ inputs.mode }}-${{ inputs.environment }}
-      cancel-in-progress: ${{ inputs.mode == 'validate' }}
+      group: sf-${{ inputs.mode }}-${{ github.event.pull_request.number || inputs.environment }}
+      cancel-in-progress: false
 
     permissions:
       contents: read
@@ -30,31 +48,35 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           fetch-depth: 0
 
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: "20"
-
-      - name: Install Salesforce CLI
+      - name: Mark workspace as safe for git
         shell: bash
-        run: npm install --global @salesforce/cli@2.113.6
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
 
-      - name: Verify Salesforce CLI
-        shell: bash
-        run: sf version
-
-      - name: Install sfdx-git-delta plugin
+      - name: Merge target branch locally
+        if: github.event_name == 'pull_request'
         shell: bash
         run: |
-          echo 'y' | sf plugins install sfdx-git-delta
-          echo "----- Installed plugins -----"
-          sf plugins
-          sf plugins inspect sfdx-git-delta > /dev/null \
-            || { echo "::error::sfdx-git-delta plugin failed to install"; exit 1; }
-          sf sgd source delta --help > /dev/null \
-            || { echo "::error::'sf sgd source delta' is not registered"; exit 1; }
+          set -euo pipefail
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          echo "Fetching latest origin/${{ github.base_ref }}..."
+          git fetch origin ${{ github.base_ref }}
+
+          echo "Merging origin/${{ github.base_ref }} into PR branch..."
+          git merge origin/${{ github.base_ref }} --no-edit
+
+          echo "Local merge succeeded. HEAD is now:"
+          git log --oneline -1
+
+      - name: Verify Salesforce CLI and sgd
+        shell: bash
+        run: |
+          sf version
+          sf sgd source delta --help > /dev/null
 
       - name: Write JWT key to file
         shell: bash
@@ -81,36 +103,22 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          EVENT="${{ github.event_name }}"
 
-          if [[ "$EVENT" == "pull_request" ]]; then
+          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
             FROM_REF="origin/${{ github.base_ref }}"
             TO_REF="HEAD"
-            USE_DELTA="true"
-
-          elif [[ "$EVENT" == "push" ]]; then
+          else
             FROM_REF="HEAD~1"
             TO_REF="HEAD"
-            USE_DELTA="true"
-
-          else
-            # workflow_dispatch (manual): no natural diff base → full deploy.
-            echo "::notice::Manual run detected; performing a full deploy of force-app."
-            USE_DELTA="false"
-            FROM_REF=""
-            TO_REF=""
           fi
 
-          echo "from_ref=$FROM_REF"   >> "$GITHUB_OUTPUT"
-          echo "to_ref=$TO_REF"       >> "$GITHUB_OUTPUT"
-          echo "use_delta=$USE_DELTA" >> "$GITHUB_OUTPUT"
+          echo "from_ref=$FROM_REF" >> "$GITHUB_OUTPUT"
+          echo "to_ref=$TO_REF"     >> "$GITHUB_OUTPUT"
 
           echo "FROM = $FROM_REF"
           echo "TO   = $TO_REF"
-          echo "USE_DELTA = $USE_DELTA"
 
       - name: Generate delta package
-        if: steps.range.outputs.use_delta == 'true'
         id: delta
         shell: bash
         run: |
@@ -147,18 +155,10 @@ jobs:
             echo "::notice::No deployable metadata changes in this commit range."
           fi
 
-      - name: Validate (full source — manual)
-        if: inputs.mode == 'validate' && steps.range.outputs.use_delta != 'true'
-        shell: bash
-        run: |
-          sf project deploy validate \
-            --source-dir  force-app \
-            --target-org  ci-org \
-            --test-level  RunLocalTests \
-            --wait        60
+      # ---------- VALIDATE ----------
 
       - name: Validate (delta)
-        if: inputs.mode == 'validate' && steps.range.outputs.use_delta == 'true' && (steps.delta.outputs.has_changes == 'true' || steps.delta.outputs.has_destructive == 'true')
+        if: inputs.mode == 'validate' && (steps.delta.outputs.has_changes == 'true' || steps.delta.outputs.has_destructive == 'true')
         shell: bash
         run: |
           ARGS=(--manifest delta/package/package.xml
@@ -171,22 +171,14 @@ jobs:
           sf project deploy validate "${ARGS[@]}"
 
       - name: Validate skipped (no changes)
-        if: inputs.mode == 'validate' && steps.range.outputs.use_delta == 'true' && steps.delta.outputs.has_changes != 'true' && steps.delta.outputs.has_destructive != 'true'
+        if: inputs.mode == 'validate' && steps.delta.outputs.has_changes != 'true' && steps.delta.outputs.has_destructive != 'true'
         shell: bash
         run: echo "::notice::No metadata changes to validate."
 
-      - name: Deploy (full source — manual)
-        if: inputs.mode == 'deploy' && steps.range.outputs.use_delta != 'true'
-        shell: bash
-        run: |
-          sf project deploy start \
-            --source-dir  force-app \
-            --target-org  ci-org \
-            --test-level  RunLocalTests \
-            --wait        60
+      # ---------- DEPLOY ----------
 
       - name: Deploy (delta)
-        if: inputs.mode == 'deploy' && steps.range.outputs.use_delta == 'true' && (steps.delta.outputs.has_changes == 'true' || steps.delta.outputs.has_destructive == 'true')
+        if: inputs.mode == 'deploy' && (steps.delta.outputs.has_changes == 'true' || steps.delta.outputs.has_destructive == 'true')
         shell: bash
         run: |
           ARGS=(--manifest delta/package/package.xml
@@ -199,7 +191,7 @@ jobs:
           sf project deploy start "${ARGS[@]}"
 
       - name: Deploy skipped (no changes)
-        if: inputs.mode == 'deploy' && steps.range.outputs.use_delta == 'true' && steps.delta.outputs.has_changes != 'true' && steps.delta.outputs.has_destructive != 'true'
+        if: inputs.mode == 'deploy' && steps.delta.outputs.has_changes != 'true' && steps.delta.outputs.has_destructive != 'true'
         shell: bash
         run: echo "::notice::No metadata changes to deploy."
 
