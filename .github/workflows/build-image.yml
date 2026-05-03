@@ -1,0 +1,41 @@
+name: Build CI Container Image
+
+on:
+  # Rebuild when the Dockerfile changes on main
+  push:
+    branches:
+      - main
+    paths:
+      - .github/docker/Dockerfile
+
+  # Allow manual rebuild (e.g. to pick up sgd security patches)
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build and push to GHCR
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    permissions:
+      contents: read
+      packages: write # required to push to ghcr.io
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push image
+        uses: docker/build-push-action@v6
+        with:
+          context: .github/docker
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository }}/sf-ci:latest
