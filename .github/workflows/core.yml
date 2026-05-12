@@ -13,26 +13,14 @@ on:
         type: string
 
 jobs:
-  resolve-image:
-    name: Resolve container image
-    runs-on: ubuntu-latest
-    outputs:
-      image: ${{ steps.img.outputs.name }}
-    steps:
-      - name: Lowercase image path
-        id: img
-        shell: bash
-        run: echo "name=ghcr.io/${GITHUB_REPOSITORY,,}/sf-ci:latest" >> "$GITHUB_OUTPUT"
-
   sf-job:
     name: Salesforce ${{ inputs.mode == 'deploy' && 'Deploy' || 'Validate' }} → ${{ inputs.environment }}
-    needs: resolve-image
     runs-on: ubuntu-latest
     timeout-minutes: 70
     environment: ${{ inputs.environment }}
 
     container:
-      image: ${{ needs.resolve-image.outputs.image }}
+      image: ${{ vars.SF_CI_IMAGE }}
       credentials:
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
@@ -92,31 +80,24 @@ jobs:
             --jwt-key-file server.key \
             --username     "${{ secrets.DEPLOYMENT_USER_NAME }}" \
             --instance-url "${{ vars.INSTANCE_URL }}" \
-            --alias        ci-org
+            --alias        "${{ inputs.environment}}"
 
       - name: Verify authenticated org
         shell: bash
-        run: sf org display --target-org ci-org
+        run: sf org display --target-org "${{ inputs.environment }}"
 
       - name: Determine delta commit range
         id: range
         shell: bash
         run: |
           set -euo pipefail
-
           if [[ "${{ github.event_name }}" == "pull_request" ]]; then
-            FROM_REF="origin/${{ github.base_ref }}"
-            TO_REF="HEAD"
+            echo "from_ref=origin/${{ github.base_ref }}" >> "$GITHUB_OUTPUT"
           else
-            FROM_REF="HEAD~1"
-            TO_REF="HEAD"
+            echo "from_ref=HEAD~1" >> "$GITHUB_OUTPUT"
           fi
 
-          echo "from_ref=$FROM_REF" >> "$GITHUB_OUTPUT"
-          echo "to_ref=$TO_REF"     >> "$GITHUB_OUTPUT"
-
-          echo "FROM = $FROM_REF"
-          echo "TO   = $TO_REF"
+          echo "to_ref=HEAD" >> "$GITHUB_OUTPUT"
 
       - name: Generate delta package
         id: delta
@@ -132,11 +113,8 @@ jobs:
             --source-dir  force-app \
             --generate-delta
 
-          echo "----- delta/package/package.xml -----"
           cat delta/package/package.xml || true
-          echo "----- delta/destructiveChanges/destructiveChanges.xml -----"
           cat delta/destructiveChanges/destructiveChanges.xml || true
-          echo "----- delta tree -----"
           find delta -maxdepth 4 -type f | sort
 
           HAS_CHANGES="false"
@@ -161,14 +139,12 @@ jobs:
         if: inputs.mode == 'validate' && (steps.delta.outputs.has_changes == 'true' || steps.delta.outputs.has_destructive == 'true')
         shell: bash
         run: |
-          ARGS=(--manifest delta/package/package.xml
-                --target-org ci-org
-                --test-level RunLocalTests
-                --wait 60)
-          if [[ "${{ steps.delta.outputs.has_destructive }}" == "true" ]]; then
-            ARGS+=(--post-destructive-changes delta/destructiveChanges/destructiveChanges.xml)
-          fi
-          sf project deploy validate "${ARGS[@]}"
+          sf project deploy validate \
+            --manifest   delta/package/package.xml \
+            ${{ steps.delta.outputs.has_destructive == 'true' && '--post-destructive-changes delta/destructiveChanges/destructiveChanges.xml' || '' }} \
+            --target-org "${{ inputs.environment }}" \
+            --test-level RunLocalTests \
+            --wait       60
 
       - name: Validate skipped (no changes)
         if: inputs.mode == 'validate' && steps.delta.outputs.has_changes != 'true' && steps.delta.outputs.has_destructive != 'true'
@@ -181,14 +157,12 @@ jobs:
         if: inputs.mode == 'deploy' && (steps.delta.outputs.has_changes == 'true' || steps.delta.outputs.has_destructive == 'true')
         shell: bash
         run: |
-          ARGS=(--manifest delta/package/package.xml
-                --target-org ci-org
-                --test-level RunLocalTests
-                --wait 60)
-          if [[ "${{ steps.delta.outputs.has_destructive }}" == "true" ]]; then
-            ARGS+=(--post-destructive-changes delta/destructiveChanges/destructiveChanges.xml)
-          fi
-          sf project deploy start "${ARGS[@]}"
+          sf project deploy start \
+            --manifest   delta/package/package.xml \
+            ${{ steps.delta.outputs.has_destructive == 'true' && '--post-destructive-changes delta/destructiveChanges/destructiveChanges.xml' || '' }} \
+            --target-org "${{ inputs.environment }}" \
+            --test-level RunLocalTests \
+            --wait       60
 
       - name: Deploy skipped (no changes)
         if: inputs.mode == 'deploy' && steps.delta.outputs.has_changes != 'true' && steps.delta.outputs.has_destructive != 'true'
