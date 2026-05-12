@@ -22,12 +22,6 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Set image name to lowercase
-        id: image
-        shell: bash
-        run: |
-          echo "name=ghcr.io/${GITHUB_REPOSITORY,,}/sf-ci:latest" >> "$GITHUB_OUTPUT"
-
       - name: Log in to GitHub Container Registry
         uses: docker/login-action@v3
         with:
@@ -40,4 +34,4 @@ jobs:
         with:
           context: .github/docker
           push: true
-          tags: ${{ steps.image.outputs.name }}
+          tags: ${{ vars.SF_CI_IMAGE }}
