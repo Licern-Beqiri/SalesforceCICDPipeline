@@ -2,30 +2,18 @@ name: Scheduled Full Validation
 
 on:
   schedule:
-    - cron: "0 6 * * 1-5"
+    - cron: "0 0 * * 1-5"
   workflow_dispatch:
 
 jobs:
-  resolve-image:
-    name: Resolve container image
-    runs-on: ubuntu-latest
-    outputs:
-      image: ${{ steps.img.outputs.name }}
-    steps:
-      - name: Lowercase image path
-        id: img
-        shell: bash
-        run: echo "name=ghcr.io/${GITHUB_REPOSITORY,,}/sf-ci:latest" >> "$GITHUB_OUTPUT"
-
   full-validate:
     name: Full source validation → Non-Production
-    needs: resolve-image
     runs-on: ubuntu-latest
     timeout-minutes: 70
     environment: Non-Production
 
     container:
-      image: ${{ needs.resolve-image.outputs.image }}
+      image: ${{ vars.SF_CI_IMAGE }}
       credentials:
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
@@ -63,18 +51,18 @@ jobs:
             --jwt-key-file server.key \
             --username     "${{ secrets.DEPLOYMENT_USER_NAME }}" \
             --instance-url "${{ vars.INSTANCE_URL }}" \
-            --alias        ci-org
+            --alias        "Non-Production"
 
       - name: Verify authenticated org
         shell: bash
-        run: sf org display --target-org ci-org
+        run: sf org display --target-org "Non-Production"
 
       - name: Validate full source against org
         shell: bash
         run: |
           sf project deploy validate \
             --source-dir  force-app \
-            --target-org  ci-org \
+            --target-org  "Non-Production" \
             --test-level  RunLocalTests \
             --wait        60
 
